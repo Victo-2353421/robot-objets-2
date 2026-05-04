@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include <ArduinoBLE.h>
+#include <SD.h>
+#include <SPI.h>
+#include <ArduinoSound.h>
 
 
 // numéro de pin.
@@ -78,6 +81,9 @@ constexpr Pin ROUE_AVANT_DROITE_PWM = 9;
 // mapper entre 80 à 180
 constexpr uint8_t ROUE_VITESSE_MIN = 80;//80;
 constexpr uint8_t ROUE_VITESSE_MAX = 180;//180;
+
+constexpr Pin SD_CS_PIN = 10;
+SDWaveFile waveFile;
 
 
 
@@ -203,6 +209,19 @@ void setup() {
         
         BLE.setAdvertisedService(nusService); // CRUCIAL pour la visibilité
         BLE.advertise();
+    }
+
+    { // setup SD et audio
+        assert(SD.begin(SD_CS_PIN), "echec SD.begin");
+        waveFile = SDWaveFile("audio.wav");
+
+        assert(waveFile, "Format de fichier invalide");
+
+        // Reglage du volume (0 a 100)
+        AudioOutI2S.volume(70);
+
+        // Lancement de la lecture en boucle
+        AudioOutI2S.loop(waveFile);
     }
 
     pinMode(ROUE_ARRIERE_GAUCHE_AVANCER, OUTPUT);
