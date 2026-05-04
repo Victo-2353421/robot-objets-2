@@ -71,7 +71,7 @@ constexpr Pin ROUE_AVANT_GAUCHE_RECULER = 0; //normalement 1? // D1/TX
 constexpr Pin ROUE_AVANT_GAUCHE_PWM = 2;
 //ARRIERE_DROITE
 constexpr Pin ROUE_ARRIERE_DROITE_AVANCER = 5;
-constexpr Pin ROUE_ARRIERE_DROITE_RECULER = 4;
+constexpr Pin ROUE_ARRIERE_DROITE_RECULER = A0;
 constexpr Pin ROUE_ARRIERE_DROITE_PWM = 6;
 //AVANT_DROITE
 constexpr Pin ROUE_AVANT_DROITE_AVANCER = 8; // normalement 7?
@@ -85,6 +85,9 @@ constexpr uint8_t ROUE_VITESSE_MAX = 180;//180;
 constexpr Pin SD_CS_PIN = 10;
 SDWaveFile waveFile;
 
+constexpr Pin LUMINOSITE_PIN = A1;
+
+constexpr Pin YEUX_PIN = A4;
 
 
 
@@ -100,20 +103,11 @@ struct Actions {
     // Mouvement latéral du robot
     int8_t lateral{};
 
-    /**
-     * Lire l'état de la manette et retourner son Actions correspondant.
-     */
-    //static Actions lire(US deltaTime){
-    //    return Actions{};
-    //}
-
     constexpr Actions(int8_t avant, int8_t lacet, int8_t lateral)
       : avant(avant)
       , lacet(lacet)
       , lateral(lateral)
-    {
-
-    }
+    {}
 
     /**
      * Affiche la struct dans le moniteur de série
@@ -194,9 +188,10 @@ void gererMouvement(struct Actions actions)
 BLEService nusService("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
 BLECharacteristic rxChar("6E400002-B5A3-F393-E0A9-E50E24DCCA9E", BLEWrite | BLEWriteWithoutResponse, 20);
 BLECharacteristic txChar("6E400003-B5A3-F393-E0A9-E50E24DCCA9E", BLENotify, 20);
-
+BLEIntCharacteristic lumChar("6E400004-B5A3-F393-E0A9-E50E24DCCA9E",
+                                       BLERead | BLENotify);
 void setup() {
-    Serial.begin(9600);
+    Serial.begin(9000);
     while (!Serial);
 
     { // Setup BLE
@@ -205,6 +200,7 @@ void setup() {
         
         nusService.addCharacteristic(rxChar);
         nusService.addCharacteristic(txChar);
+        nusService.addCharacteristic(lumChar);
         BLE.addService(nusService);
         
         BLE.setAdvertisedService(nusService); // CRUCIAL pour la visibilité
@@ -218,7 +214,7 @@ void setup() {
         assert(waveFile, "Format de fichier invalide");
 
         // Reglage du volume (0 a 100)
-        AudioOutI2S.volume(70);
+        AudioOutI2S.volume(50);
 
         // Lancement de la lecture en boucle
         AudioOutI2S.loop(waveFile);
@@ -236,52 +232,140 @@ void setup() {
     pinMode(ROUE_AVANT_DROITE_AVANCER, OUTPUT);
     pinMode(ROUE_AVANT_DROITE_RECULER, OUTPUT);
     pinMode(ROUE_AVANT_DROITE_PWM, OUTPUT);
+
+    pinMode(LUMINOSITE_PIN, INPUT);
 }
 
-void traiterCommande(char c, struct Actions& actions) {
-    constexpr int8_t testVitesse = 127;
+class ByteSlice {
+public:
+    const uint8_t *ptr;
+    size_t len;
 
-    switch (c) {
-        case 'w':
-        case 'W': {
-            actions = Actions(testVitesse, 0, 0);
+    constexpr ByteSlice(const uint8_t *ptr, size_t len)
+      : ptr(ptr), len(len) {}
+      
+    ByteSlice() = default;
+
+    const uint8_t &operator[] (size_t i) const{
+        assert(i < len, "ByteSlice OOB");
+        return ptr[i];
+    }
+    
+    uint8_t operator[] (size_t i) {
+        assert(i < len, "ByteSlice OOB");
+        return ptr[i];
+    }
+
+    void popFront(size_t n = 1) {
+        assert(len <= n, "popFront OOB");
+        len -= n;
+        ptr += n;
+    }
+
+    explicit operator String() const{
+        return String((const char*)ptr, len);
+    }
+    
+    operator bool() const{
+        return len && ptr;
+    }
+};
+
+void allumerYeux(bool etat) {
+    digitalWrite(YEUX_PIN, etat);
+}
+
+int8_t vitesseRoues = 127;
+void traiterCommande(class ByteSlice &slice, struct Actions& actions) {
+    switch (slice[0]) {
+        case 'f':
+        case 'F': {
+            actions = Actions(vitesseRoues, 0, 0);
             Serial.println(F("[avant]"));
+            slice.popFront();
         } break;
 
-        case 's':
-        case 'S': {
-            actions = Actions(-(testVitesse), 0, 0);
+        case 'b':
+        case 'B': {
+            actions = Actions(-(vitesseRoues), 0, 0);
             Serial.println(F("[recul]"));
+            slice.popFront();
         } break;
 
-        case 'a':
-        case 'A': {
-            actions = Actions(0, static_cast<int8_t>(-testVitesse), 0);
-            Serial.println(F("[rot. gauche]"));
-        } break;
-
-        case 'd':
-        case 'D': {
-            actions = Actions(0, testVitesse, 0);
-            Serial.println(F("[rot. droite]"));
-        } break;
-
-        case 'q':
-        case 'Q': {
-            actions = Actions(0, 0, static_cast<int8_t>(-testVitesse));
+        case 'l':
+        case 'L': {
+            actions = Actions(0, 0, static_cast<int8_t>(-vitesseRoues));
             Serial.println(F("[lat. gauche]"));
+            slice.popFront();
         } break;
 
-        case 'e':
-        case 'E': {
-            actions = Actions(0, 0, testVitesse);
+        case 'r':
+        case 'R': {
+            actions = Actions(0, 0, vitesseRoues);
             Serial.println(F("[lat. droite]"));
+            slice.popFront();
+        } break;
+
+        case 'v':
+        case 'V': {
+            actions = Actions(0, static_cast<int8_t>(-vitesseRoues), 0);
+            Serial.println(F("[rot. gauche]"));
+            slice.popFront();
         } break;
 
         case 'x':
         case 'X': {
+            actions = Actions(0, vitesseRoues, 0);
+            Serial.println(F("[rot. droite]"));
+            slice.popFront();
+        } break;
+
+        case 's':
+        case 'S': {
             actions = Actions(0, 0, 0);
             Serial.println(F("[stop]"));
+            slice.popFront();
+        } break;
+        
+        case '-': {
+            vitesseRoues -= 10;
+            Serial.println(F("[- vitesse]"));
+            slice.popFront();
+        } break;
+        
+        case '+': {
+            vitesseRoues += 10;
+            Serial.println(F("[+ vitesse]"));
+            slice.popFront();
+        } break;
+
+        case 'P': {
+            constexpr size_t tailleMaxNomFichier = 20;
+            if (slice.len > 2 &&
+                slice.len < tailleMaxNomFichier + 2 &&
+                slice[1] == ':') { // lire fichier audio
+                String nomFichier(slice.ptr + 2, slice.len - 2);
+                slice = ByteSlice();
+            } else {
+                String nomFichier("audio.wav");
+                slice.popFront();
+            }
+        } break;
+        
+        case 'D': {
+            if (slice.len >= 4) {
+                ByteSlice cmd(slice.ptr, 4);
+                if (memcmp(cmd.ptr, "D:ON", 4)){
+                    allumerYeux(true);
+                    slice.popFront(4);
+                } else if(slice.len >= 5){
+                    ByteSlice cmd(slice.ptr, 5);
+                    if (memcmp(cmd.ptr, "D:OFF", 5)){
+                        allumerYeux(false);
+                        slice.popFront(5);
+                    } 
+                }
+            }
         } break;
 
         case '\r':
@@ -291,7 +375,7 @@ void traiterCommande(char c, struct Actions& actions) {
 
         default: {
             Serial.print(F("Commande inconnue: "));
-            Serial.println(c);
+            Serial.println(slice[0]);
         } break;
     }
 }
@@ -302,12 +386,31 @@ void loop() {
     BLE.poll(); // Traite les événements BLE internes
 
     if (rxChar.written()) {
-        int len = rxChar.valueLength();
+        size_t len = rxChar.valueLength();
         const uint8_t* val = rxChar.value();
         
-        for (int i = 0; i < len; i++) {
-            char c = (char)val[i];
-            traiterCommande(c, actions); // ex: 'F' pour Forward, 'S' pour Stop
+        ByteSlice slice{val, len};
+
+        while (slice.len) {
+            traiterCommande(slice, actions); // ex: 'F' pour Forward, 'S' pour Stop
+        }
+    }
+
+    { // luminosité
+        int valeurBrute = analogRead(A1);
+        Serial.println(valeurBrute);
+        // À FAIRE: convertir en pourcentage
+
+        float pourcentage = util::conversionClamp<int, float>(valeurBrute, 0.0f, 1023.0f) / 10.23f;
+        static float lastLumSent = valeurBrute;
+
+        constexpr float CHANGE_THRESHOLD = 10.0f;
+
+        // Envoyer seulement si la valeur a changé d'au moins CHANGE_THRESHOLD % 
+        if (abs(pourcentage - lastLumSent) > CHANGE_THRESHOLD) {
+            lumChar.writeValue(pourcentage);
+            lastLumSent = pourcentage;
+            Serial.println("Luminosité : " + String(pourcentage) + "%");
         }
     }
 
