@@ -234,6 +234,7 @@ void setup() {
     pinMode(ROUE_AVANT_DROITE_PWM, OUTPUT);
 
     pinMode(LUMINOSITE_PIN, INPUT);
+    pinMode(YEUX_PIN, OUTPUT);
 }
 
 class ByteSlice {
@@ -257,7 +258,7 @@ public:
     }
 
     void popFront(size_t n = 1) {
-        assert(len <= n, "popFront OOB");
+        assert(n <= len, "popFront OOB");
         len -= n;
         ptr += n;
     }
@@ -273,6 +274,22 @@ public:
 
 void allumerYeux(bool etat) {
     digitalWrite(YEUX_PIN, etat);
+}
+
+bool jouerFichierAudio(const char *nomFichier) {
+    Serial.print("Lecture de l'audio : ");
+    Serial.println(nomFichier);
+
+    SDWaveFile nouveauFichier(nomFichier);
+    if (!nouveauFichier) {
+        Serial.print(F("Fichier audio invalide: "));
+        Serial.println(nomFichier);
+        return false;
+    }
+
+    waveFile = nouveauFichier;
+    AudioOutI2S.loop(waveFile);
+    return true;
 }
 
 int8_t vitesseRoues = 127;
@@ -328,26 +345,42 @@ void traiterCommande(class ByteSlice &slice, struct Actions& actions) {
         } break;
         
         case '-': {
-            vitesseRoues -= 10;
+            int16_t nouvelleVitesse = static_cast<int16_t>(vitesseRoues) - 10;
+            vitesseRoues = util::conversionClamp<int16_t, int8_t>(nouvelleVitesse, 0, 127);
             Serial.println(F("[- vitesse]"));
             slice.popFront();
         } break;
         
         case '+': {
-            vitesseRoues += 10;
+            int16_t nouvelleVitesse = static_cast<int16_t>(vitesseRoues) + 10;
+            vitesseRoues = util::conversionClamp<int16_t, int8_t>(nouvelleVitesse, 0, 127);
             Serial.println(F("[+ vitesse]"));
             slice.popFront();
         } break;
 
         case 'P': {
             constexpr size_t tailleMaxNomFichier = 20;
-            if (slice.len > 2 &&
-                slice.len < tailleMaxNomFichier + 2 &&
-                slice[1] == ':') { // lire fichier audio
-                String nomFichier(slice.ptr + 2, slice.len - 2);
-                slice = ByteSlice();
+            if (slice.len > 2 && slice[1] == ':') { // lire fichier audio
+                size_t nomLen = slice.len - 2;
+                for (size_t i = 2; i < slice.len; ++i) {
+                    if (slice[i] == '\r' || slice[i] == '\n') {
+                        nomLen = i - 2;
+                        break;
+                    }
+                }
+
+                if (nomLen > 0 && nomLen <= tailleMaxNomFichier) {
+                    String nomFichier(reinterpret_cast<const char*>(slice.ptr + 2), nomLen);
+                    jouerFichierAudio(nomFichier.c_str());
+                }
+
+                size_t consomme = 2 + nomLen;
+                while (consomme < slice.len && (slice[consomme] == '\r' || slice[consomme] == '\n')) {
+                    ++consomme;
+                }
+                slice.popFront(consomme);
             } else {
-                String nomFichier("audio.wav");
+                jouerFichierAudio("audio.wav");
                 slice.popFront();
             }
         } break;
@@ -355,12 +388,12 @@ void traiterCommande(class ByteSlice &slice, struct Actions& actions) {
         case 'D': {
             if (slice.len >= 4) {
                 ByteSlice cmd(slice.ptr, 4);
-                if (memcmp(cmd.ptr, "D:ON", 4)){
+                if (memcmp(cmd.ptr, "D:ON", 4) == 0){
                     allumerYeux(true);
                     slice.popFront(4);
                 } else if(slice.len >= 5){
                     ByteSlice cmd(slice.ptr, 5);
-                    if (memcmp(cmd.ptr, "D:OFF", 5)){
+                    if (memcmp(cmd.ptr, "D:OFF", 5) == 0){
                         allumerYeux(false);
                         slice.popFront(5);
                     } 
@@ -371,11 +404,13 @@ void traiterCommande(class ByteSlice &slice, struct Actions& actions) {
         case '\r':
         case '\n': {
              // ignorer retours de ligne
+               slice.popFront();
         } break;
 
         default: {
             Serial.print(F("Commande inconnue: "));
             Serial.println(slice[0]);
+            slice.popFront();
         } break;
     }
 }
@@ -408,7 +443,7 @@ void loop() {
 
         // Envoyer seulement si la valeur a changé d'au moins CHANGE_THRESHOLD % 
         if (abs(pourcentage - lastLumSent) > CHANGE_THRESHOLD) {
-            lumChar.writeValue(pourcentage);
+            lumChar.writeValue(static_cast<int>(pourcentage + 0.5f));
             lastLumSent = pourcentage;
             Serial.println("Luminosité : " + String(pourcentage) + "%");
         }
