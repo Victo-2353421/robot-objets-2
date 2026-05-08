@@ -277,6 +277,7 @@ void allumerYeux(bool etat) {
 }
 
 bool jouerFichierAudio(const char *nomFichier) {
+    AudioOutI2S.stop();
     Serial.print("Lecture de l'audio : ");
     Serial.println(nomFichier);
 
