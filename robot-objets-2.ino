@@ -62,20 +62,20 @@ static U conversionClamp(T valeur, U min, U max) {
 
 
 //ARRIERE_GAUCHE
-constexpr Pin ROUE_ARRIERE_GAUCHE_AVANCER = A6;
-constexpr Pin ROUE_ARRIERE_GAUCHE_RECULER = A7;
+constexpr Pin ROUE_ARRIERE_GAUCHE_AVANCER = A7;
+constexpr Pin ROUE_ARRIERE_GAUCHE_RECULER = A6;
 constexpr Pin ROUE_ARRIERE_GAUCHE_PWM = 3;
 //AVANT_GAUCHE
-constexpr Pin ROUE_AVANT_GAUCHE_AVANCER = 1; //normalement 0? // D0/RX
-constexpr Pin ROUE_AVANT_GAUCHE_RECULER = 0; //normalement 1? // D1/TX
+constexpr Pin ROUE_AVANT_GAUCHE_AVANCER = 0; //normalement 0? // D0/RX
+constexpr Pin ROUE_AVANT_GAUCHE_RECULER = 1; //normalement 1? // D1/TX
 constexpr Pin ROUE_AVANT_GAUCHE_PWM = 2;
 //ARRIERE_DROITE
-constexpr Pin ROUE_ARRIERE_DROITE_AVANCER = 5;
-constexpr Pin ROUE_ARRIERE_DROITE_RECULER = A0;
+constexpr Pin ROUE_ARRIERE_DROITE_AVANCER = A0;
+constexpr Pin ROUE_ARRIERE_DROITE_RECULER = 5;
 constexpr Pin ROUE_ARRIERE_DROITE_PWM = 6;
 //AVANT_DROITE
-constexpr Pin ROUE_AVANT_DROITE_AVANCER = 8; // normalement 7?
-constexpr Pin ROUE_AVANT_DROITE_RECULER = 7; // normalement 8?
+constexpr Pin ROUE_AVANT_DROITE_AVANCER = 7; // normalement 7?
+constexpr Pin ROUE_AVANT_DROITE_RECULER = 8; // normalement 8?
 constexpr Pin ROUE_AVANT_DROITE_PWM = 9;
 
 // mapper entre 80 à 180
@@ -346,15 +346,33 @@ void traiterCommande(class ByteSlice &slice, struct Actions& actions) {
         } break;
         
         case '-': {
+            const int8_t ancienneVitesse = abs(vitesseRoues);
             int16_t nouvelleVitesse = static_cast<int16_t>(vitesseRoues) - 10;
             vitesseRoues = util::conversionClamp<int16_t, int8_t>(nouvelleVitesse, 0, 127);
+            const auto majAction = [&](int8_t &val) {
+                if (abs(val) == ancienneVitesse) {
+                    val = (val < 0) ? -vitesseRoues : vitesseRoues;
+                }
+            };
+            majAction(actions.avant);
+            majAction(actions.lacet);
+            majAction(actions.lateral);
             Serial.println(F("[- vitesse]"));
             slice.popFront();
         } break;
         
         case '+': {
+            const int8_t ancienneVitesse = abs(vitesseRoues);
             int16_t nouvelleVitesse = static_cast<int16_t>(vitesseRoues) + 10;
             vitesseRoues = util::conversionClamp<int16_t, int8_t>(nouvelleVitesse, 0, 127);
+            const auto majAction = [&](int8_t &val) {
+                if (abs(val) == ancienneVitesse) {
+                    val = (val < 0) ? -vitesseRoues : vitesseRoues;
+                }
+            };
+            majAction(actions.avant);
+            majAction(actions.lacet);
+            majAction(actions.lateral);
             Serial.println(F("[+ vitesse]"));
             slice.popFront();
         } break;
@@ -433,7 +451,7 @@ void loop() {
     }
 
     { // luminosité
-        int valeurBrute = analogRead(A1);
+        int valeurBrute = analogRead(LUMINOSITE_PIN);
         Serial.println(valeurBrute);
         // À FAIRE: convertir en pourcentage
 
